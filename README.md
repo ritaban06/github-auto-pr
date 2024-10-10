@@ -53,6 +53,9 @@
    - Provide a title and description for the PR.
    - Schedule the PR to be created at a specified date and time.
 
+## GUI Preview  
+![alt text](<Screenshot 2024-10-08 205417.png>)  
+
 ## Example
 
 1. Start the application.
@@ -77,7 +80,7 @@ pip install tkinter tkcalendar schedule
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the [MIT License](LICENSE.txt).
 
 ## Acknowledgments
 
