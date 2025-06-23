@@ -1,3 +1,4 @@
 /.venv
 /build
 /dist
+github_pr_scheduler.json
