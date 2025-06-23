@@ -305,22 +305,22 @@ class PRScheduler:
 class UIEventHandler:
     """Handles UI events and user interactions."""
 
-    @staticmethod
-    def browse_repo() -> None:
+    @classmethod
+    def browse_repo(cls, gui_instance) -> None:
         """Open directory browser for selecting local Git repository."""
         dir_path = filedialog.askdirectory()
         if dir_path:
-            entry_repo_path.set(dir_path)
+            gui_instance.entry_repo_path.set(dir_path)
 
-    @staticmethod
-    def create_pr_now() -> None:
+    @classmethod
+    def create_pr_now(cls, gui_instance) -> None:
         """Handle 'Create PR Now' button click."""
-        inputs = UIEventHandler._get_input_values()
+        inputs = cls._get_input_values(gui_instance)
         if not PRManager.validate_inputs(inputs):
             return
 
         # Update history
-        UIEventHandler._update_input_history()
+        cls._update_input_history(gui_instance)
 
         # Create PR
         PRManager.create_pr(
@@ -332,20 +332,20 @@ class UIEventHandler:
             inputs["body"]
         )
 
-    @staticmethod
-    def schedule_pr() -> None:
+    @classmethod
+    def schedule_pr(cls, gui_instance) -> None:
         """Handle 'Schedule PR' button click."""
-        inputs = UIEventHandler._get_input_values()
+        inputs = cls._get_input_values(gui_instance)
         if not PRManager.validate_inputs(inputs):
             return
 
         # Update history
-        UIEventHandler._update_input_history()
+        cls._update_input_history(gui_instance)
 
         # Get schedule time
-        schedule_date = cal.get_date()
-        schedule_hour = int(hour_spinbox.get())
-        schedule_minute = int(minute_spinbox.get())
+        schedule_date = gui_instance.cal.get_date()
+        schedule_hour = int(gui_instance.hour_spinbox.get())
+        schedule_minute = int(gui_instance.minute_spinbox.get())
 
         schedule_datetime = datetime(
             schedule_date.year,
@@ -366,22 +366,22 @@ class UIEventHandler:
             schedule_datetime
         )
 
-    @staticmethod
-    def cancel_pr(pr_id: int) -> None:
+    @classmethod
+    def cancel_pr(cls, pr_id: int, gui_instance) -> None:
         """Cancel a scheduled pull request."""
         if PRScheduler.cancel_scheduled_pr(pr_id):
-            UIEventHandler.update_scheduled_prs()
-            update_status(f"PR #{pr_id} cancelled successfully")
+            cls.update_scheduled_prs(gui_instance)
+            gui_instance.update_status(f"PR #{pr_id} cancelled successfully")
 
-    @staticmethod
-    def edit_pr(pr_id: int) -> None:
+    @classmethod
+    def edit_pr(cls, pr_id: int, gui_instance) -> None:
         """Edit a scheduled pull request."""
         if pr_id not in app_state.scheduled_prs:
             return
 
-        new_date = cal.get_date()
-        new_hour = int(hour_spinbox.get())
-        new_minute = int(minute_spinbox.get())
+        new_date = gui_instance.cal.get_date()
+        new_hour = int(gui_instance.hour_spinbox.get())
+        new_minute = int(gui_instance.minute_spinbox.get())
         new_datetime = datetime(
             new_date.year,
             new_date.month,
@@ -391,55 +391,67 @@ class UIEventHandler:
         )
 
         if PRScheduler.reschedule_pr(pr_id, new_datetime):
-            UIEventHandler.update_scheduled_prs()
-            update_status(f"PR #{pr_id} rescheduled successfully")
+            cls.update_scheduled_prs(gui_instance)
+            gui_instance.update_status(f"PR #{pr_id} rescheduled successfully")
 
-    @staticmethod
-    def _update_input_history() -> None:
-        """Update history for input fields."""
-        ConfigManager.update_history('repos', entry_repo.get())
-        ConfigManager.update_history('usernames', entry_fork_user.get())
-        ConfigManager.update_history('branches', entry_fork_branch.get())
-        ConfigManager.update_history('titles', entry_title.get())
+    @classmethod
+    def _update_input_history(cls, gui_instance) -> None:
+        """Update history for input fields.
+        
+        Args:
+            gui_instance: Instance of the GUI class containing the input widgets
+        """
+        ConfigManager.update_history('repos', gui_instance.entry_repo.get())
+        ConfigManager.update_history('usernames', gui_instance.entry_fork_user.get())
+        ConfigManager.update_history('branches', gui_instance.entry_fork_branch.get())
+        ConfigManager.update_history('titles', gui_instance.entry_title.get())
 
-    @staticmethod
-    def _get_input_values() -> Dict[str, str]:
+    @classmethod
+    def _get_input_values(cls, gui_instance) -> Dict[str, str]:
         """Get current values from input fields.
         
+        Args:
+            gui_instance: Instance of the GUI class containing the input widgets
+            
         Returns:
             Dict[str, str]: Dictionary containing input field values
         """
         return {
-            "git_repo_path": entry_repo_path.get(),
-            "repo": entry_repo.get(),
-            "head": f"{entry_fork_user.get()}:{entry_fork_branch.get()}",
-            "base": entry_base.get(),
-            "title": entry_title.get(),
-            "body": entry_body.get("1.0", tk.END).strip()
+            "git_repo_path": gui_instance.entry_repo_path.get(),
+            "repo": gui_instance.entry_repo.get(),
+            "head": f"{gui_instance.entry_fork_user.get()}:{gui_instance.entry_fork_branch.get()}",
+            "base": gui_instance.entry_base.get(),
+            "title": gui_instance.entry_title.get(),
+            "body": gui_instance.entry_body.get("1.0", tk.END).strip()
         }
 
-    @staticmethod
-    def update_scheduled_prs() -> None:
-        """Update the display of scheduled PRs."""
-        for widget in frame_scheduled_prs.winfo_children():
+    @classmethod
+    def update_scheduled_prs(cls, gui_instance) -> None:
+        """Update the display of scheduled PRs.
+        
+        Args:
+            gui_instance: Instance of the GUI class containing the frame_scheduled_prs widget
+        """
+        frame = gui_instance.frame_scheduled_prs
+        for widget in frame.winfo_children():
             widget.destroy()  # Clear previous widgets
 
         if not app_state.scheduled_prs:
-            ttk.Label(frame_scheduled_prs, text="No PRs scheduled", style='Info.TLabel').pack(pady=10)
+            ttk.Label(frame, text="No PRs scheduled", style='Info.TLabel').pack(pady=10)
             return
 
         # Create headers
-        header_frame = ttk.Frame(frame_scheduled_prs)
+        header_frame = ttk.Frame(frame)
         header_frame.pack(fill="x", padx=5, pady=5)
         ttk.Label(header_frame, text="ID", width=5).pack(side=tk.LEFT, padx=5)
         ttk.Label(header_frame, text="Title", width=30).pack(side=tk.LEFT, padx=5)
         ttk.Label(header_frame, text="Scheduled Time", width=20).pack(side=tk.LEFT, padx=5)
         ttk.Label(header_frame, text="Actions", width=15).pack(side=tk.LEFT, padx=5)
 
-        ttk.Separator(frame_scheduled_prs, orient='horizontal').pack(fill='x', padx=5)
+        ttk.Separator(frame, orient='horizontal').pack(fill='x', padx=5)
 
         for pr_id, details in app_state.scheduled_prs.items():
-            pr_frame = ttk.Frame(frame_scheduled_prs)
+            pr_frame = ttk.Frame(frame)
             pr_frame.pack(fill="x", padx=5, pady=2)
 
             ttk.Label(pr_frame, text=f"#{pr_id}", width=5).pack(side=tk.LEFT, padx=5)
@@ -450,9 +462,9 @@ class UIEventHandler:
             btn_frame.pack(side=tk.LEFT, padx=5)
 
             ttk.Button(btn_frame, text="Edit", style='Small.TButton', 
-                     command=lambda pr_id=pr_id: UIEventHandler.edit_pr(pr_id)).pack(side=tk.LEFT, padx=2)
+                     command=lambda pr_id=pr_id: UIEventHandler.edit_pr(pr_id, gui_instance)).pack(side=tk.LEFT, padx=2)
             ttk.Button(btn_frame, text="Cancel", style='Small.Danger.TButton',
-                     command=lambda pr_id=pr_id: UIEventHandler.cancel_pr(pr_id)).pack(side=tk.LEFT, padx=2)
+                     command=lambda pr_id=pr_id: UIEventHandler.cancel_pr(pr_id, gui_instance)).pack(side=tk.LEFT, padx=2)
 
 # GUI Setup and Management
 class GUI:
@@ -470,7 +482,7 @@ class GUI:
         
         # Load configuration and initialize display
         ConfigManager.load_config()
-        UIEventHandler.update_scheduled_prs()
+        UIEventHandler.update_scheduled_prs(self)
 
     def setup_styles(self) -> None:
         """Configure ttk styles for widgets."""
@@ -510,7 +522,7 @@ class GUI:
         self.create_labeled_field(self.frame_inputs, 0, "Local Git Repo Path:", 
                                 self.entry_repo_path, "Select your local Git repository directory")
         ttk.Button(self.frame_inputs, text="Browse", 
-                  command=UIEventHandler.browse_repo).grid(row=0, column=2, padx=5)
+                  command=lambda: UIEventHandler.browse_repo(self)).grid(row=0, column=2, padx=5)
 
         # Origin Repository
         self.create_labeled_field(self.frame_inputs, 1, "Origin Repository (org/repo):", 
@@ -567,10 +579,10 @@ class GUI:
     def create_action_buttons(self) -> None:
         """Create action buttons."""
         ttk.Button(self.frame_actions, text="Create PR Now", 
-                  command=UIEventHandler.create_pr_now, 
+                  command=lambda: UIEventHandler.create_pr_now(self), 
                   style='Accent.TButton').pack(side=tk.LEFT, padx=5)
         ttk.Button(self.frame_actions, text="Schedule PR", 
-                  command=UIEventHandler.schedule_pr).pack(side=tk.LEFT, padx=5)
+                  command=lambda: UIEventHandler.schedule_pr(self)).pack(side=tk.LEFT, padx=5)
 
     def create_scheduled_prs_view(self) -> None:
         """Create the scheduled PRs display area."""
