@@ -659,12 +659,12 @@ class GUI:
                               background="#ffffe0", relief=tk.SOLID, borderwidth=1)
             label.pack()
             
-            def hide_tooltip():
+            def hide_tooltip(event=None):
                 tooltip.destroy()
+                widget.bind('<Leave>', lambda e: None)
             
-            label.bind('<Leave>', lambda e: hide_tooltip())
-            tooltip.bind('<Leave>', lambda e: hide_tooltip())
-            parent.bind('<Leave>', lambda e: hide_tooltip())
+            tooltip.bind('<Leave>', hide_tooltip)
+            widget.bind('<Leave>', hide_tooltip)
             
         widget = parent.grid_slaves(row=row, column=0)[0]
         widget.bind('<Enter>', show_tooltip)
