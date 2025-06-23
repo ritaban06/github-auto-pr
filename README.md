@@ -75,7 +75,7 @@
 You can install the dependencies using `pip`:
 
 ```bash
-pip install tkinter tkcalendar schedule
+pip install -r requirements.txt
 ```
 
 ## License
