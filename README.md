@@ -1,4 +1,3 @@
-
 # AutoPRScheduler
 
 ## Overview
