@@ -3,7 +3,7 @@ import subprocess
 import json
 import tkinter as tk
 from tkinter import messagebox, filedialog, ttk
-from tkcalendar import Calendar, DateEntry
+from tkcalendar import DateEntry
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any
