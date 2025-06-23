@@ -38,6 +38,7 @@ class AppState:
             'branches': [],
             'titles': []
         }
+        self.gui_instance = None
 
 app_state = AppState()
 
@@ -239,8 +240,13 @@ class PRScheduler:
             if PRManager.create_pr(git_repo_path, repo, head, base, title, body, pr_id):
                 ConfigManager.save_config()
 
-        pr_job = root.after(int(delay * 1000), create_scheduled_pr)
-        app_state.scheduled_prs[pr_id]["job"] = pr_job
+        # Get GUI instance from app_state
+        gui = app_state.gui_instance
+        if gui:
+            pr_job = gui.root.after(int(delay * 1000), create_scheduled_pr)
+            app_state.scheduled_prs[pr_id]["job"] = pr_job
+        else:
+            app_state.scheduled_prs[pr_id]["job"] = None
 
         ConfigManager.save_config()
         messagebox.showinfo("Scheduling Success", 
@@ -262,7 +268,9 @@ class PRScheduler:
 
         # Cancel the scheduled job
         if app_state.scheduled_prs[pr_id].get("job"):
-            root.after_cancel(app_state.scheduled_prs[pr_id]["job"])
+            gui = app_state.gui_instance
+            if gui:
+                gui.root.after_cancel(app_state.scheduled_prs[pr_id]["job"])
 
         # Remove from scheduled PRs
         del app_state.scheduled_prs[pr_id]
@@ -474,6 +482,9 @@ class GUI:
         self.root = tk.Tk()
         self.root.title(f"{APP_NAME} v{APP_VERSION}")
         self.root.geometry("800x600")
+        
+        # Set this instance in app_state
+        app_state.gui_instance = self
         
         self.setup_styles()
         self.create_variables()
