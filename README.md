@@ -53,7 +53,7 @@
    - Schedule the PR to be created at a specified date and time.
 
 ## GUI Preview  
-![AutoPRScheduler](<Screenshot 2024-10-08 205417.png>)  
+![AutoPRScheduler](<Screenshot 2025-06-23 164559.png>)  
 
 ## Example
 
