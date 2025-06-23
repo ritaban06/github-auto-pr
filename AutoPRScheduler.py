@@ -1,446 +1,651 @@
+"""
+GitHub PR Scheduler - A tool to create and schedule GitHub pull requests.
+
+This application provides a GUI interface to:
+1. Create pull requests immediately
+2. Schedule pull requests for later
+3. Manage scheduled pull requests
+
+Author: Ritaban Ghosh
+License: MIT
+"""
+
 import os
 import subprocess
 import json
 import tkinter as tk
 from tkinter import messagebox, filedialog, ttk
-from tkcalendar import DateEntry
+from tkcalendar import Calendar, DateEntry
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
-# Constants
+# Application Constants
+APP_NAME = "GitHub PR Scheduler"
+APP_VERSION = "1.0.0"
 CONFIG_FILE = Path.home() / '.github_pr_scheduler.json'
 MAX_HISTORY_ENTRIES = 10
+DEFAULT_BASE_BRANCHES = ['main']
 
-# Dictionary to hold scheduled PRs and history
-scheduled_prs: Dict[int, Dict[str, Any]] = {}
-next_pr_id = 1
-history: Dict[str, list] = {
-    'repos': [],
-    'usernames': [],
-    'branches': [],
-    'titles': []
-}
+# Global State
+class AppState:
+    def __init__(self):
+        self.scheduled_prs: Dict[int, Dict[str, Any]] = {}
+        self.next_pr_id: int = 1
+        self.history: Dict[str, list] = {
+            'repos': [],
+            'usernames': [],
+            'branches': [],
+            'titles': []
+        }
 
-def load_config():
-    """Load configuration and history from file."""
-    global scheduled_prs, next_pr_id, history
-    try:
-        if CONFIG_FILE.exists():
-            with open(CONFIG_FILE, 'r') as f:
-                data = json.load(f)
-                scheduled_prs = data.get('scheduled_prs', {})
-                next_pr_id = data.get('next_pr_id', 1)
-                history = data.get('history', {
-                    'repos': [],
-                    'usernames': [],
-                    'branches': [],
-                    'titles': []
-                })
-    except Exception as e:
-        messagebox.showwarning("Warning", f"Failed to load configuration: {str(e)}")
+app_state = AppState()
 
-def save_config():
-    """Save configuration and history to file."""
-    try:
-        with open(CONFIG_FILE, 'w') as f:
-            json.dump({
-                'scheduled_prs': scheduled_prs,
-                'next_pr_id': next_pr_id,
-                'history': history
-            }, f)
-    except Exception as e:
-        messagebox.showwarning("Warning", f"Failed to save configuration: {str(e)})")
-
-def update_history(field: str, value: str):
-    """Update history for a specific field."""
-    if field in history and value and value not in history[field]:
-        history[field].insert(0, value)
-        if len(history[field]) > MAX_HISTORY_ENTRIES:
-            history[field].pop()
-        save_config()
-
-# Function to create a PR using GitHub CLI
-def validate_inputs() -> bool:
-    """Validate all required inputs before creating PR."""
-    required_fields = {
-        'Local Git Repo': entry_repo_path.get(),
-        'Origin Repository': entry_repo.get(),
-        'Forked Username': entry_fork_user.get(),
-        'Forked Branch': entry_fork_branch.get(),
-        'Base Branch': entry_base.get(),
-        'PR Title': entry_title.get()
-    }
+# Configuration Management
+class ConfigManager:
+    """Handles loading, saving, and updating application configuration."""
     
-    missing = [field for field, value in required_fields.items() if not value.strip()]
-    if missing:
-        messagebox.showerror("Error", f"Please fill in the following required fields:\n{chr(10).join(missing)}")
-        return False
-    return True
+    @staticmethod
+    def load_config() -> None:
+        """Load configuration and history from file."""
+        try:
+            if CONFIG_FILE.exists():
+                with open(CONFIG_FILE, 'r') as f:
+                    data = json.load(f)
+                    app_state.scheduled_prs = data.get('scheduled_prs', {})
+                    app_state.next_pr_id = data.get('next_pr_id', 1)
+                    app_state.history = data.get('history', {
+                        'repos': [],
+                        'usernames': [],
+                        'branches': [],
+                        'titles': []
+                    })
+        except Exception as e:
+            messagebox.showwarning("Configuration Warning", 
+                                 f"Failed to load configuration: {str(e)}\n" 
+                                 "Using default settings.")
 
-def create_pr(git_repo_path, repo, head, base, title, body, pr_id=None):
-    """
-    This function changes to the specified Git repository directory,
-    then uses the GitHub CLI (`gh`) to create a pull request.
-    """
-    try:
-        os.chdir(git_repo_path)  # Change directory to the local Git repository
-    except FileNotFoundError:
-        messagebox.showerror("Error", f"Invalid Git repository path: {git_repo_path}")
-        return
+    @staticmethod
+    def save_config() -> None:
+        """Save configuration and history to file."""
+        try:
+            CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with open(CONFIG_FILE, 'w') as f:
+                json.dump({
+                    'scheduled_prs': app_state.scheduled_prs,
+                    'next_pr_id': app_state.next_pr_id,
+                    'history': app_state.history
+                }, f, indent=2)
+        except Exception as e:
+            messagebox.showwarning("Save Configuration Error", 
+                                 f"Failed to save configuration: {str(e)}")
 
-    # Construct the gh CLI command to create a pull request
-    command = [
-        "gh", "pr", "create",
-        "--repo", repo,      # Origin repo name (org/repo)
-        "--head", head,      # Forked account's branch
-        "--base", base,      # Origin repo branch (base branch)
-        "--title", title,    # Title for the PR
-        "--body", body       # Body text for the PR
-    ]
-
-    result = subprocess.run(command, capture_output=True, text=True)
-
-    if result.returncode == 0:
-        messagebox.showinfo("Success", f"Pull request {pr_id} created successfully!")
-    else:
-        messagebox.showerror("Error", f"Failed to create PR {pr_id}: {result.stderr}")
-
-    if pr_id:
-        del scheduled_prs[pr_id]  # Remove from scheduled PRs once executed
-        update_scheduled_prs()
-
-# Schedule the PR creation task at a specific time
-def schedule_task(git_repo_path, repo, head, base, title, body, schedule_datetime, pr_id):
-    def task():
-        create_pr(git_repo_path, repo, head, base, title, body, pr_id)
-
-    delay = (schedule_datetime - datetime.now()).total_seconds()
-    if delay > 0:
-        pr_job = root.after(int(delay * 1000), task)
+    @staticmethod
+    def update_history(field: str, value: str) -> None:
+        """Update history for a specific field.
         
-        # Safely assign the job to the dictionary entry
-        if pr_id in scheduled_prs:
-            scheduled_prs[pr_id]["job"] = pr_job
+        Args:
+            field: The history field to update ('repos', 'usernames', etc.)
+            value: The value to add to the history
+        """
+        if field in app_state.history and value and value not in app_state.history[field]:
+            app_state.history[field].insert(0, value)
+            if len(app_state.history[field]) > MAX_HISTORY_ENTRIES:
+                app_state.history[field].pop()
+            ConfigManager.save_config()
 
-        update_scheduled_prs()
-        messagebox.showinfo("Info", f"PR {pr_id} scheduled for {schedule_datetime}.")
-    else:
-        messagebox.showerror("Error", "Scheduled time must be in the future.")
+# Pull Request Management
+class PRManager:
+    """Handles GitHub pull request operations and validation."""
 
-
-# Browse for local Git repo
-def browse_repo():
-    dir_path = filedialog.askdirectory()
-    if dir_path:
-        entry_repo_path.set(dir_path)
-
-# Handle "Run Now" button click
-def run_now():
-    if not validate_inputs():
-        return
+    @staticmethod
+    def validate_inputs(inputs: Dict[str, str]) -> bool:
+        """Validate all required inputs before creating PR.
         
-    # Update history
-    update_history('repos', entry_repo.get())
-    update_history('usernames', entry_fork_user.get())
-    update_history('branches', entry_fork_branch.get())
-    update_history('titles', entry_title.get())
-    git_repo_path = entry_repo_path.get()   # Local Git repository path
-    repo = entry_repo.get()                 # Origin repository (org/repo)
-    head = f"{entry_fork_user.get()}:{entry_fork_branch.get()}"  # Forked branch (username:branch)
-    base = entry_base.get()                 # Base branch (origin branch)
-    title = entry_title.get()               # PR title
-    body = entry_body.get()                 # PR body
-
-    create_pr(git_repo_path, repo, head, base, title, body)
-
-# Handle "Schedule" button click
-def schedule_task_gui():
-    if not validate_inputs():
-        return
+        Args:
+            inputs: Dictionary containing PR creation fields
+            
+        Returns:
+            bool: True if all required fields are present and valid
+        """
+        required_fields = {
+            'Local Git Repo': inputs.get('repo_path', ''),
+            'Origin Repository': inputs.get('repo', ''),
+            'Forked Username': inputs.get('username', ''),
+            'Forked Branch': inputs.get('branch', ''),
+            'Base Branch': inputs.get('base', ''),
+            'PR Title': inputs.get('title', '')
+        }
         
-    # Update history
-    update_history('repos', entry_repo.get())
-    update_history('usernames', entry_fork_user.get())
-    update_history('branches', entry_fork_branch.get())
-    update_history('titles', entry_title.get())
-    global next_pr_id
-    git_repo_path = entry_repo_path.get()
-    repo = entry_repo.get()
-    head = f"{entry_fork_user.get()}:{entry_fork_branch.get()}"
-    base = entry_base.get()
-    title = entry_title.get()
-    body = entry_body.get()
+        missing = [field for field, value in required_fields.items() if not value.strip()]
+        if missing:
+            messagebox.showerror(
+                "Validation Error", 
+                f"Please fill in the following required fields:\n{chr(10).join(missing)}"
+            )
+            return False
+        return True
 
-    schedule_date = cal.get_date()
-    schedule_hour = int(hour_spinbox.get())
-    schedule_minute = int(minute_spinbox.get())
-
-    schedule_datetime = datetime(schedule_date.year, schedule_date.month, schedule_date.day, schedule_hour, schedule_minute)
-
-    # Create or edit the scheduled PR entry
-    pr_id = next_pr_id
-    next_pr_id += 1
-
-    # Store the scheduled PR details in the dictionary
-    scheduled_prs[pr_id] = {
-        "repo": repo,
-        "head": head,
-        "base": base,
-        "title": title,
-        "body": body,
-        "time": schedule_datetime,
-        "job": None  # Initialize job as None, will assign after scheduling
-    }
-
-    # Schedule the task and assign the job to the dictionary
-    schedule_task(git_repo_path, repo, head, base, title, body, schedule_datetime, pr_id)
-
-
-    # Store the scheduled PR details
-    pr_id = next_pr_id
-    next_pr_id += 1
-    scheduled_prs[pr_id] = {
-        "repo": repo,
-        "head": head,
-        "base": base,
-        "title": title,
-        "body": body,
-        "time": schedule_datetime,
-    }
-
-    schedule_task(git_repo_path, repo, head, base, title, body, schedule_datetime, pr_id)
-
-# Update the display of scheduled PRs
-def update_scheduled_prs():
-    for widget in frame_scheduled_prs.winfo_children():
-        widget.destroy()  # Clear previous widgets
-
-    if not scheduled_prs:
-        tk.Label(frame_scheduled_prs, text="No PRs scheduled").grid(row=0, column=0, columnspan=3)
-        return
-
-    row = 0
-    for pr_id, details in scheduled_prs.items():
-        pr_info = f"PR {pr_id}: {details['title']} - Scheduled for {details['time']}"
+    @staticmethod
+    def create_pr(git_repo_path: str, repo: str, head: str, base: str, 
+                  title: str, body: str, pr_id: Optional[int] = None) -> bool:
+        """Create a pull request using GitHub CLI.
         
-        # Display the PR details in a label
-        lbl_pr = tk.Label(frame_scheduled_prs, text=pr_info)
-        lbl_pr.grid(row=row, column=0, sticky="w", padx=10, pady=5)  # Left-align the label
+        Args:
+            git_repo_path: Path to local Git repository
+            repo: Origin repository name (org/repo)
+            head: Forked account's branch (username:branch)
+            base: Origin repo branch (base branch)
+            title: Title for the PR
+            body: Body text for the PR
+            pr_id: Optional ID for scheduled PRs
+            
+        Returns:
+            bool: True if PR creation was successful
+        """
+        try:
+            # Verify and change to the Git repository directory
+            repo_path = Path(git_repo_path)
+            if not (repo_path.exists() and (repo_path / '.git').exists()):
+                messagebox.showerror(
+                    "Repository Error", 
+                    f"Invalid Git repository path: {git_repo_path}"
+                )
+                return False
+                
+            os.chdir(git_repo_path)
 
-        # Edit button
-        btn_edit = tk.Button(frame_scheduled_prs, text="Edit", command=lambda pr_id=pr_id: edit_pr(pr_id))
-        btn_edit.grid(row=row, column=1, padx=5, pady=5)
+            # Construct and execute the GitHub CLI command
+            command = [
+                "gh", "pr", "create",
+                "--repo", repo,
+                "--head", head,
+                "--base", base,
+                "--title", title,
+                "--body", body
+            ]
 
-        # Cancel button
-        btn_cancel = tk.Button(frame_scheduled_prs, text="Cancel", command=lambda pr_id=pr_id: cancel_pr(pr_id))
-        btn_cancel.grid(row=row, column=2, padx=5, pady=5)
+            result = subprocess.run(command, capture_output=True, text=True)
 
-        row += 1  # Move to the next row for the next PR
+            if result.returncode == 0:
+                messagebox.showinfo(
+                    "Success", 
+                    f"Pull request {pr_id if pr_id else ''} created successfully!"
+                )
+                
+                # Clean up scheduled PR if applicable
+                if pr_id and pr_id in app_state.scheduled_prs:
+                    del app_state.scheduled_prs[pr_id]
+                    ConfigManager.save_config()
+                return True
+            else:
+                messagebox.showerror(
+                    "PR Creation Error", 
+                    f"Failed to create PR {pr_id if pr_id else ''}:\n{result.stderr}"
+                )
+                return False
 
-# Cancel a scheduled PR
-def cancel_pr(pr_id):
-    if pr_id in scheduled_prs and scheduled_prs[pr_id]["job"] is not None:
-        root.after_cancel(scheduled_prs[pr_id]["job"])
-    del scheduled_prs[pr_id]
-    update_scheduled_prs()
+        except Exception as e:
+            messagebox.showerror(
+                "System Error", 
+                f"An unexpected error occurred: {str(e)}"
+            )
+            return False
 
-# Edit a scheduled PR
-def edit_pr(pr_id):
-    pr_details = scheduled_prs[pr_id]
-    new_date = cal.get_date()  # For simplicity, just update time (similar to scheduling)
-    new_hour = int(hour_spinbox.get())
-    new_minute = int(minute_spinbox.get())
-    new_datetime = datetime(new_date.year, new_date.month, new_date.day, new_hour, new_minute)
+# Scheduler Management
+class PRScheduler:
+    """Handles scheduling and management of pull requests."""
 
-    cancel_pr(pr_id)  # Cancel current schedule
-    schedule_task(entry_repo_path.get(), pr_details["repo"], pr_details["head"], pr_details["base"], pr_details["title"], pr_details["body"], new_datetime, pr_id)
+    @staticmethod
+    def schedule_pr(git_repo_path: str, repo: str, head: str, base: str, 
+                   title: str, body: str, schedule_datetime: datetime) -> Optional[int]:
+        """Schedule a pull request for creation at a specific time.
+        
+        Args:
+            git_repo_path: Path to local Git repository
+            repo: Origin repository name
+            head: Forked branch reference
+            base: Target branch
+            title: PR title
+            body: PR description
+            schedule_datetime: When to create the PR
+            
+        Returns:
+            Optional[int]: PR ID if scheduled successfully, None otherwise
+        """
+        delay = (schedule_datetime - datetime.now()).total_seconds()
+        if delay <= 0:
+            messagebox.showerror("Scheduling Error", "Scheduled time must be in the future.")
+            return None
 
-# Create the main GUI window
-root = tk.Tk()
-root.title("GitHub PR Scheduler")
-root.geometry("800x600")
+        # Create new PR entry
+        pr_id = app_state.next_pr_id
+        app_state.next_pr_id += 1
 
-# Create main frames for better organization
-frame_inputs = ttk.LabelFrame(root, text="PR Details", padding="10")
-frame_inputs.pack(fill="x", padx=10, pady=5)
+        # Store PR details
+        app_state.scheduled_prs[pr_id] = {
+            "repo": repo,
+            "head": head,
+            "base": base,
+            "title": title,
+            "body": body,
+            "time": schedule_datetime,
+            "git_repo_path": git_repo_path,
+            "job": None
+        }
 
-frame_schedule = ttk.LabelFrame(root, text="Schedule", padding="10")
-frame_schedule.pack(fill="x", padx=10, pady=5)
+        # Schedule the PR creation
+        def create_scheduled_pr():
+            if PRManager.create_pr(git_repo_path, repo, head, base, title, body, pr_id):
+                ConfigManager.save_config()
 
-frame_actions = ttk.Frame(root, padding="10")
-frame_actions.pack(fill="x", padx=10, pady=5)
+        pr_job = root.after(int(delay * 1000), create_scheduled_pr)
+        app_state.scheduled_prs[pr_id]["job"] = pr_job
 
-# Load saved configuration
-load_config()
+        ConfigManager.save_config()
+        messagebox.showinfo("Scheduling Success", 
+                          f"PR #{pr_id} scheduled for {schedule_datetime.strftime('%Y-%m-%d %H:%M')}")
+        return pr_id
 
-# Local Git Repo Path
-tk.Label(frame_inputs, text="Local Git Repo Path:").grid(row=0, column=0, sticky="e", padx=5)
-entry_repo_path = tk.StringVar()
-repo_path_entry = ttk.Combobox(frame_inputs, textvariable=entry_repo_path, width=60)
-repo_path_entry.grid(row=0, column=1, sticky="ew", padx=5)
-ttk.Button(frame_inputs, text="Browse", command=browse_repo).grid(row=0, column=2, padx=5)
+    @staticmethod
+    def cancel_scheduled_pr(pr_id: int) -> bool:
+        """Cancel a scheduled pull request.
+        
+        Args:
+            pr_id: ID of the PR to cancel
+            
+        Returns:
+            bool: True if cancelled successfully
+        """
+        if pr_id not in app_state.scheduled_prs:
+            return False
 
-# Add tooltip
-repo_path_tooltip = ttk.Label(frame_inputs, text="Select your local Git repository directory")
-repo_path_tooltip.grid(row=0, column=3, padx=5)
-repo_path_tooltip.bind('<Enter>', lambda e: repo_path_tooltip.configure(foreground='blue'))
-repo_path_tooltip.bind('<Leave>', lambda e: repo_path_tooltip.configure(foreground='black'))
+        # Cancel the scheduled job
+        if app_state.scheduled_prs[pr_id].get("job"):
+            root.after_cancel(app_state.scheduled_prs[pr_id]["job"])
 
-# Origin Repo (org/repo)
-tk.Label(frame_inputs, text="Origin Repository (org/repo):").grid(row=1, column=0, sticky="e", padx=5)
-entry_repo = tk.StringVar()
-repo_entry = ttk.Combobox(frame_inputs, textvariable=entry_repo, width=60, values=history['repos'])
-repo_entry.grid(row=1, column=1, sticky="ew", padx=5)
-repo_tooltip = ttk.Label(frame_inputs, text="Format: organization/repository")
-repo_tooltip.grid(row=1, column=3, padx=5)
+        # Remove from scheduled PRs
+        del app_state.scheduled_prs[pr_id]
+        ConfigManager.save_config()
+        return True
 
-# Forked Account Username
-tk.Label(frame_inputs, text="Forked Account Username:").grid(row=2, column=0, sticky="e", padx=5)
-entry_fork_user = tk.StringVar()
-fork_user_entry = ttk.Combobox(frame_inputs, textvariable=entry_fork_user, width=60, values=history['usernames'])
-fork_user_entry.grid(row=2, column=1, sticky="ew", padx=5)
-user_tooltip = ttk.Label(frame_inputs, text="Your GitHub username")
-user_tooltip.grid(row=2, column=3, padx=5)
+    @staticmethod
+    def reschedule_pr(pr_id: int, new_datetime: datetime) -> bool:
+        """Reschedule an existing pull request.
+        
+        Args:
+            pr_id: ID of the PR to reschedule
+            new_datetime: New scheduled time
+            
+        Returns:
+            bool: True if rescheduled successfully
+        """
+        if pr_id not in app_state.scheduled_prs:
+            return False
 
-# Forked Branch
-tk.Label(frame_inputs, text="Forked Branch:").grid(row=3, column=0, sticky="e", padx=5)
-entry_fork_branch = tk.StringVar()
-fork_branch_entry = ttk.Combobox(frame_inputs, textvariable=entry_fork_branch, width=60, values=history['branches'])
-fork_branch_entry.grid(row=3, column=1, sticky="ew", padx=5)
-branch_tooltip = ttk.Label(frame_inputs, text="Your branch containing the changes")
-branch_tooltip.grid(row=3, column=3, padx=5)
+        pr_details = app_state.scheduled_prs[pr_id]
+        
+        # Cancel current schedule
+        PRScheduler.cancel_scheduled_pr(pr_id)
+        
+        # Create new schedule
+        new_pr_id = PRScheduler.schedule_pr(
+            pr_details["git_repo_path"],
+            pr_details["repo"],
+            pr_details["head"],
+            pr_details["base"],
+            pr_details["title"],
+            pr_details["body"],
+            new_datetime
+        )
+        
+        return new_pr_id is not None
 
-# Origin Branch (base branch)
-tk.Label(frame_inputs, text="Origin Base Branch:").grid(row=4, column=0, sticky="e", padx=5)
-entry_base = tk.StringVar()
-base_entry = ttk.Combobox(frame_inputs, textvariable=entry_base, width=60, values=['main', 'master', 'develop'])
-base_entry.grid(row=4, column=1, sticky="ew", padx=5)
-base_tooltip = ttk.Label(frame_inputs, text="Target branch for the PR")
-base_tooltip.grid(row=4, column=3, padx=5)
+# UI Event Handlers
+class UIEventHandler:
+    """Handles UI events and user interactions."""
 
-# PR Title
-tk.Label(frame_inputs, text="PR Title:").grid(row=5, column=0, sticky="e", padx=5)
-entry_title = tk.StringVar()
-title_entry = ttk.Combobox(frame_inputs, textvariable=entry_title, width=60, values=history['titles'])
-title_entry.grid(row=5, column=1, sticky="ew", padx=5)
-title_tooltip = ttk.Label(frame_inputs, text="Brief description of your changes")
-title_tooltip.grid(row=5, column=3, padx=5)
+    @staticmethod
+    def browse_repo() -> None:
+        """Open directory browser for selecting local Git repository."""
+        dir_path = filedialog.askdirectory()
+        if dir_path:
+            entry_repo_path.set(dir_path)
 
-# PR Body
-tk.Label(frame_inputs, text="PR Body:").grid(row=6, column=0, sticky="e", padx=5)
-entry_body = tk.Text(frame_inputs, width=60, height=4)
-entry_body.grid(row=6, column=1, sticky="ew", padx=5)
-body_tooltip = ttk.Label(frame_inputs, text="Detailed description of your changes")
-body_tooltip.grid(row=6, column=3, padx=5)
+    @staticmethod
+    def create_pr_now() -> None:
+        """Handle 'Create PR Now' button click."""
+        inputs = UIEventHandler._get_input_values()
+        if not PRManager.validate_inputs(inputs):
+            return
 
-# Date selector (calendar widget) and time selector (Spinbox)
-tk.Label(frame_schedule, text="Schedule Date:").grid(row=0, column=0, sticky="e", padx=5)
-cal = DateEntry(frame_schedule, width=12, background='darkblue', foreground='white', borderwidth=2, date_pattern="yyyy-mm-dd")
-cal.grid(row=0, column=1, sticky="w", padx=5)
-date_tooltip = ttk.Label(frame_schedule, text="Select date for PR creation")
-date_tooltip.grid(row=0, column=2, padx=5)
+        # Update history
+        UIEventHandler._update_input_history()
 
-# Time selector (Spinbox for hours and minutes)
-tk.Label(frame_schedule, text="Schedule Time:").grid(row=1, column=0, sticky="e", padx=5)
-frame_time = ttk.Frame(frame_schedule)
-frame_time.grid(row=1, column=1, sticky="w", padx=5)
-hour_spinbox = ttk.Spinbox(frame_time, from_=0, to=23, width=2, format="%02.0f")  # Hours
-hour_spinbox.pack(side=tk.LEFT)
-ttk.Label(frame_time, text=":").pack(side=tk.LEFT)
-minute_spinbox = ttk.Spinbox(frame_time, from_=0, to=59, width=2, format="%02.0f")  # Minutes
-minute_spinbox.pack(side=tk.LEFT)
-time_tooltip = ttk.Label(frame_schedule, text="Set time in 24-hour format")
-time_tooltip.grid(row=1, column=2, padx=5)
+        # Create PR
+        PRManager.create_pr(
+            inputs["git_repo_path"],
+            inputs["repo"],
+            inputs["head"],
+            inputs["base"],
+            inputs["title"],
+            inputs["body"]
+        )
 
-# Buttons to run the PR creation immediately or schedule it
-btn_run_now = ttk.Button(frame_actions, text="Create PR Now", command=run_now, style='Accent.TButton')
-btn_run_now.pack(side=tk.LEFT, padx=5)
+    @staticmethod
+    def schedule_pr() -> None:
+        """Handle 'Schedule PR' button click."""
+        inputs = UIEventHandler._get_input_values()
+        if not PRManager.validate_inputs(inputs):
+            return
 
-btn_schedule = ttk.Button(frame_actions, text="Schedule PR", command=schedule_task_gui)
-btn_schedule.pack(side=tk.LEFT, padx=5)
+        # Update history
+        UIEventHandler._update_input_history()
 
-# Style configuration
-style = ttk.Style()
-style.configure('Accent.TButton', background='#0066cc')
+        # Get schedule time
+        schedule_date = cal.get_date()
+        schedule_hour = int(hour_spinbox.get())
+        schedule_minute = int(minute_spinbox.get())
 
-# Frame for showing scheduled PRs
-frame_scheduled_prs_container = ttk.LabelFrame(root, text="Scheduled Pull Requests", padding="10")
-frame_scheduled_prs_container.pack(fill="both", expand=True, padx=10, pady=5)
+        schedule_datetime = datetime(
+            schedule_date.year,
+            schedule_date.month,
+            schedule_date.day,
+            schedule_hour,
+            schedule_minute
+        )
 
-# Add a scrollable frame for scheduled PRs
-canvas = tk.Canvas(frame_scheduled_prs_container)
-scrollbar = ttk.Scrollbar(frame_scheduled_prs_container, orient="vertical", command=canvas.yview)
-frame_scheduled_prs = ttk.Frame(canvas)
+        # Schedule PR
+        PRScheduler.schedule_pr(
+            inputs["git_repo_path"],
+            inputs["repo"],
+            inputs["head"],
+            inputs["base"],
+            inputs["title"],
+            inputs["body"],
+            schedule_datetime
+        )
 
-# Configure scrolling
-canvas.configure(yscrollcommand=scrollbar.set)
-scrollbar.pack(side="right", fill="y")
-canvas.pack(side="left", fill="both", expand=True)
+    @staticmethod
+    def cancel_pr(pr_id: int) -> None:
+        """Cancel a scheduled pull request."""
+        if PRScheduler.cancel_scheduled_pr(pr_id):
+            UIEventHandler.update_scheduled_prs()
+            update_status(f"PR #{pr_id} cancelled successfully")
 
-# Create a window inside the canvas for the frame
-canvas_frame = canvas.create_window((0, 0), window=frame_scheduled_prs, anchor="nw")
+    @staticmethod
+    def edit_pr(pr_id: int) -> None:
+        """Edit a scheduled pull request."""
+        if pr_id not in app_state.scheduled_prs:
+            return
 
-# Update scroll region when frame size changes
-def configure_scroll_region(event):
-    canvas.configure(scrollregion=canvas.bbox("all"))
-    # Update the canvas window size to match the frame width
-    canvas.itemconfig(canvas_frame, width=canvas.winfo_width())
+        new_date = cal.get_date()
+        new_hour = int(hour_spinbox.get())
+        new_minute = int(minute_spinbox.get())
+        new_datetime = datetime(
+            new_date.year,
+            new_date.month,
+            new_date.day,
+            new_hour,
+            new_minute
+        )
 
-frame_scheduled_prs.bind("<Configure>", configure_scroll_region)
-canvas.bind("<Configure>", lambda e: canvas.itemconfig(canvas_frame, width=canvas.winfo_width()))
+        if PRScheduler.reschedule_pr(pr_id, new_datetime):
+            UIEventHandler.update_scheduled_prs()
+            update_status(f"PR #{pr_id} rescheduled successfully")
 
-# Status bar
-status_bar = ttk.Label(root, text="Ready", relief=tk.SUNKEN)
-status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+    @staticmethod
+    def _update_input_history() -> None:
+        """Update history for input fields."""
+        ConfigManager.update_history('repos', entry_repo.get())
+        ConfigManager.update_history('usernames', entry_fork_user.get())
+        ConfigManager.update_history('branches', entry_fork_branch.get())
+        ConfigManager.update_history('titles', entry_title.get())
 
-def update_status(message):
-    status_bar.config(text=message)
-    root.update_idletasks()
+    @staticmethod
+    def _get_input_values() -> Dict[str, str]:
+        """Get current values from input fields.
+        
+        Returns:
+            Dict[str, str]: Dictionary containing input field values
+        """
+        return {
+            "git_repo_path": entry_repo_path.get(),
+            "repo": entry_repo.get(),
+            "head": f"{entry_fork_user.get()}:{entry_fork_branch.get()}",
+            "base": entry_base.get(),
+            "title": entry_title.get(),
+            "body": entry_body.get("1.0", tk.END).strip()
+        }
 
-# Override the update_scheduled_prs function
-def update_scheduled_prs():
-    for widget in frame_scheduled_prs.winfo_children():
-        widget.destroy()  # Clear previous widgets
+    @staticmethod
+    def update_scheduled_prs() -> None:
+        """Update the display of scheduled PRs."""
+        for widget in frame_scheduled_prs.winfo_children():
+            widget.destroy()  # Clear previous widgets
 
-    if not scheduled_prs:
-        ttk.Label(frame_scheduled_prs, text="No PRs scheduled", style='Info.TLabel').pack(pady=10)
-        return
+        if not app_state.scheduled_prs:
+            ttk.Label(frame_scheduled_prs, text="No PRs scheduled", style='Info.TLabel').pack(pady=10)
+            return
 
-    # Create headers
-    header_frame = ttk.Frame(frame_scheduled_prs)
-    header_frame.pack(fill="x", padx=5, pady=5)
-    ttk.Label(header_frame, text="ID", width=5).pack(side=tk.LEFT, padx=5)
-    ttk.Label(header_frame, text="Title", width=30).pack(side=tk.LEFT, padx=5)
-    ttk.Label(header_frame, text="Scheduled Time", width=20).pack(side=tk.LEFT, padx=5)
-    ttk.Label(header_frame, text="Actions", width=15).pack(side=tk.LEFT, padx=5)
+        # Create headers
+        header_frame = ttk.Frame(frame_scheduled_prs)
+        header_frame.pack(fill="x", padx=5, pady=5)
+        ttk.Label(header_frame, text="ID", width=5).pack(side=tk.LEFT, padx=5)
+        ttk.Label(header_frame, text="Title", width=30).pack(side=tk.LEFT, padx=5)
+        ttk.Label(header_frame, text="Scheduled Time", width=20).pack(side=tk.LEFT, padx=5)
+        ttk.Label(header_frame, text="Actions", width=15).pack(side=tk.LEFT, padx=5)
 
-    ttk.Separator(frame_scheduled_prs, orient='horizontal').pack(fill='x', padx=5)
+        ttk.Separator(frame_scheduled_prs, orient='horizontal').pack(fill='x', padx=5)
 
-    for pr_id, details in scheduled_prs.items():
-        pr_frame = ttk.Frame(frame_scheduled_prs)
-        pr_frame.pack(fill="x", padx=5, pady=2)
+        for pr_id, details in app_state.scheduled_prs.items():
+            pr_frame = ttk.Frame(frame_scheduled_prs)
+            pr_frame.pack(fill="x", padx=5, pady=2)
 
-        ttk.Label(pr_frame, text=f"#{pr_id}", width=5).pack(side=tk.LEFT, padx=5)
-        ttk.Label(pr_frame, text=details['title'][:40], width=30).pack(side=tk.LEFT, padx=5)
-        ttk.Label(pr_frame, text=details['time'].strftime('%Y-%m-%d %H:%M'), width=20).pack(side=tk.LEFT, padx=5)
+            ttk.Label(pr_frame, text=f"#{pr_id}", width=5).pack(side=tk.LEFT, padx=5)
+            ttk.Label(pr_frame, text=details['title'][:40], width=30).pack(side=tk.LEFT, padx=5)
+            ttk.Label(pr_frame, text=details['time'].strftime('%Y-%m-%d %H:%M'), width=20).pack(side=tk.LEFT, padx=5)
 
-        btn_frame = ttk.Frame(pr_frame)
-        btn_frame.pack(side=tk.LEFT, padx=5)
+            btn_frame = ttk.Frame(pr_frame)
+            btn_frame.pack(side=tk.LEFT, padx=5)
 
-        ttk.Button(btn_frame, text="Edit", style='Small.TButton', 
-                 command=lambda pr_id=pr_id: edit_pr(pr_id)).pack(side=tk.LEFT, padx=2)
-        ttk.Button(btn_frame, text="Cancel", style='Small.Danger.TButton',
-                 command=lambda pr_id=pr_id: cancel_pr(pr_id)).pack(side=tk.LEFT, padx=2)
+            ttk.Button(btn_frame, text="Edit", style='Small.TButton', 
+                     command=lambda pr_id=pr_id: UIEventHandler.edit_pr(pr_id)).pack(side=tk.LEFT, padx=2)
+            ttk.Button(btn_frame, text="Cancel", style='Small.Danger.TButton',
+                     command=lambda pr_id=pr_id: UIEventHandler.cancel_pr(pr_id)).pack(side=tk.LEFT, padx=2)
 
-# Configure styles
-style = ttk.Style()
-style.configure('Small.TButton', padding=2)
-style.configure('Small.Danger.TButton', padding=2)
-style.configure('Info.TLabel', foreground='gray')
+# GUI Setup and Management
+class GUI:
+    """Handles the main window and widget setup."""
 
-# Initialize the display
-update_scheduled_prs()
+    def __init__(self):
+        self.root = tk.Tk()
+        self.root.title(f"{APP_NAME} v{APP_VERSION}")
+        self.root.geometry("800x600")
+        
+        self.setup_styles()
+        self.create_variables()
+        self.create_widgets()
+        self.setup_layout()
+        
+        # Load configuration and initialize display
+        ConfigManager.load_config()
+        UIEventHandler.update_scheduled_prs()
 
-# Run the GUI main loop
-root.mainloop()
+    def setup_styles(self) -> None:
+        """Configure ttk styles for widgets."""
+        self.style = ttk.Style()
+        self.style.configure('Accent.TButton', background='#0066cc')
+        self.style.configure('Small.TButton', padding=2)
+        self.style.configure('Small.Danger.TButton', padding=2)
+        self.style.configure('Info.TLabel', foreground='gray')
+
+    def create_variables(self) -> None:
+        """Create tkinter variables for widgets."""
+        self.entry_repo_path = tk.StringVar()
+        self.entry_repo = tk.StringVar()
+        self.entry_fork_user = tk.StringVar()
+        self.entry_fork_branch = tk.StringVar()
+        self.entry_base = tk.StringVar()
+        self.entry_title = tk.StringVar()
+
+    def create_widgets(self) -> None:
+        """Create all GUI widgets."""
+        self.create_main_frames()
+        self.create_input_fields()
+        self.create_schedule_fields()
+        self.create_action_buttons()
+        self.create_scheduled_prs_view()
+        self.create_status_bar()
+
+    def create_main_frames(self) -> None:
+        """Create main organizational frames."""
+        self.frame_inputs = ttk.LabelFrame(self.root, text="PR Details", padding="10")
+        self.frame_schedule = ttk.LabelFrame(self.root, text="Schedule", padding="10")
+        self.frame_actions = ttk.Frame(self.root, padding="10")
+
+    def create_input_fields(self) -> None:
+        """Create input fields for PR details."""
+        # Local Git Repo Path
+        self.create_labeled_field(self.frame_inputs, 0, "Local Git Repo Path:", 
+                                self.entry_repo_path, "Select your local Git repository directory")
+        ttk.Button(self.frame_inputs, text="Browse", 
+                  command=UIEventHandler.browse_repo).grid(row=0, column=2, padx=5)
+
+        # Origin Repository
+        self.create_labeled_field(self.frame_inputs, 1, "Origin Repository (org/repo):", 
+                                self.entry_repo, "Format: organization/repository", 
+                                values=app_state.history['repos'])
+
+        # Forked Account Username
+        self.create_labeled_field(self.frame_inputs, 2, "Forked Account Username:", 
+                                self.entry_fork_user, "Your GitHub username", 
+                                values=app_state.history['usernames'])
+
+        # Forked Branch
+        self.create_labeled_field(self.frame_inputs, 3, "Forked Branch:", 
+                                self.entry_fork_branch, "Your branch containing the changes", 
+                                values=app_state.history['branches'])
+
+        # Origin Base Branch
+        self.create_labeled_field(self.frame_inputs, 4, "Origin Base Branch:", 
+                                self.entry_base, "Target branch for the PR", 
+                                values=DEFAULT_BASE_BRANCHES)
+
+        # PR Title
+        self.create_labeled_field(self.frame_inputs, 5, "PR Title:", 
+                                self.entry_title, "Brief description of your changes", 
+                                values=app_state.history['titles'])
+
+        # PR Body
+        tk.Label(self.frame_inputs, text="PR Body:").grid(row=6, column=0, sticky="e", padx=5)
+        self.entry_body = tk.Text(self.frame_inputs, width=60, height=4)
+        self.entry_body.grid(row=6, column=1, sticky="ew", padx=5)
+        self.create_tooltip(self.frame_inputs, 6, "Detailed description of your changes")
+
+    def create_schedule_fields(self) -> None:
+        """Create date and time selection widgets."""
+        # Date selector
+        tk.Label(self.frame_schedule, text="Schedule Date:").grid(row=0, column=0, sticky="e", padx=5)
+        self.cal = DateEntry(self.frame_schedule, width=12, background='darkblue',
+                           foreground='white', borderwidth=2, date_pattern="yyyy-mm-dd")
+        self.cal.grid(row=0, column=1, sticky="w", padx=5)
+        self.create_tooltip(self.frame_schedule, 0, "Select date for PR creation")
+
+        # Time selector
+        tk.Label(self.frame_schedule, text="Schedule Time:").grid(row=1, column=0, sticky="e", padx=5)
+        frame_time = ttk.Frame(self.frame_schedule)
+        frame_time.grid(row=1, column=1, sticky="w", padx=5)
+
+        self.hour_spinbox = ttk.Spinbox(frame_time, from_=0, to=23, width=2, format="%02.0f")
+        self.hour_spinbox.pack(side=tk.LEFT)
+        ttk.Label(frame_time, text=":").pack(side=tk.LEFT)
+        self.minute_spinbox = ttk.Spinbox(frame_time, from_=0, to=59, width=2, format="%02.0f")
+        self.minute_spinbox.pack(side=tk.LEFT)
+        self.create_tooltip(self.frame_schedule, 1, "Set time in 24-hour format")
+
+    def create_action_buttons(self) -> None:
+        """Create action buttons."""
+        ttk.Button(self.frame_actions, text="Create PR Now", 
+                  command=UIEventHandler.create_pr_now, 
+                  style='Accent.TButton').pack(side=tk.LEFT, padx=5)
+        ttk.Button(self.frame_actions, text="Schedule PR", 
+                  command=UIEventHandler.schedule_pr).pack(side=tk.LEFT, padx=5)
+
+    def create_scheduled_prs_view(self) -> None:
+        """Create the scheduled PRs display area."""
+        # Container frame
+        self.frame_scheduled_prs_container = ttk.LabelFrame(
+            self.root, text="Scheduled Pull Requests", padding="10")
+
+        # Scrollable canvas setup
+        self.canvas = tk.Canvas(self.frame_scheduled_prs_container)
+        self.scrollbar = ttk.Scrollbar(
+            self.frame_scheduled_prs_container, orient="vertical", command=self.canvas.yview)
+        self.frame_scheduled_prs = ttk.Frame(self.canvas)
+
+        # Configure scrolling
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        self.canvas_frame = self.canvas.create_window(
+            (0, 0), window=self.frame_scheduled_prs, anchor="nw")
+
+        # Bind events for proper scrolling behavior
+        self.frame_scheduled_prs.bind("<Configure>", self.configure_scroll_region)
+        self.canvas.bind("<Configure>", 
+                        lambda e: self.canvas.itemconfig(self.canvas_frame, width=self.canvas.winfo_width()))
+
+    def create_status_bar(self) -> None:
+        """Create the status bar."""
+        self.status_bar = ttk.Label(self.root, text="Ready", relief=tk.SUNKEN)
+
+    def setup_layout(self) -> None:
+        """Arrange all widgets in the main window."""
+        # Main frames
+        self.frame_inputs.pack(fill="x", padx=10, pady=5)
+        self.frame_schedule.pack(fill="x", padx=10, pady=5)
+        self.frame_actions.pack(fill="x", padx=10, pady=5)
+
+        # Scheduled PRs view
+        self.frame_scheduled_prs_container.pack(fill="both", expand=True, padx=10, pady=5)
+        self.scrollbar.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
+
+        # Status bar
+        self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+
+    def create_labeled_field(self, parent: ttk.Frame, row: int, label: str, 
+                           variable: tk.Variable, tooltip: str, values: list = None) -> None:
+        """Create a labeled field with optional combobox and tooltip."""
+        tk.Label(parent, text=label).grid(row=row, column=0, sticky="e", padx=5)
+        if values is not None:
+            ttk.Combobox(parent, textvariable=variable, width=60, 
+                        values=values).grid(row=row, column=1, sticky="ew", padx=5)
+        else:
+            ttk.Entry(parent, textvariable=variable, 
+                     width=60).grid(row=row, column=1, sticky="ew", padx=5)
+        self.create_tooltip(parent, row, tooltip)
+
+    def create_tooltip(self, parent: ttk.Frame, row: int, text: str) -> None:
+        """Create a tooltip label."""
+        tooltip = ttk.Label(parent, text=text)
+        tooltip.grid(row=row, column=3, padx=5)
+        tooltip.bind('<Enter>', lambda e: tooltip.configure(foreground='blue'))
+        tooltip.bind('<Leave>', lambda e: tooltip.configure(foreground='black'))
+
+    def configure_scroll_region(self, event: tk.Event) -> None:
+        """Update scroll region when frame size changes."""
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        self.canvas.itemconfig(self.canvas_frame, width=self.canvas.winfo_width())
+
+    def update_status(self, message: str) -> None:
+        """Update status bar message."""
+        self.status_bar.config(text=message)
+        self.root.update_idletasks()
+
+    def run(self) -> None:
+        """Start the GUI main loop."""
+        self.root.mainloop()
+
+# Create and run the application
+app = GUI()
+app.run()
