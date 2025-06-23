@@ -560,9 +560,9 @@ class GUI:
         # Date selector
         tk.Label(self.frame_schedule, text="Schedule Date:").grid(row=0, column=0, sticky="e", padx=5)
         self.cal = DateEntry(self.frame_schedule, width=12, background='darkblue',
-                           foreground='white', borderwidth=2, date_pattern="yyyy-mm-dd")
+                           foreground='white', borderwidth=2, date_pattern="dd-mm-yyyy")
         self.cal.grid(row=0, column=1, sticky="w", padx=5)
-        self.create_tooltip(self.frame_schedule, 0, "Select date for PR creation")
+        self.create_tooltip(self.frame_schedule, 0, "(DD-MM-YYYY format)")
 
         # Time selector
         tk.Label(self.frame_schedule, text="Schedule Time:").grid(row=1, column=0, sticky="e", padx=5)
@@ -574,7 +574,7 @@ class GUI:
         ttk.Label(frame_time, text=":").pack(side=tk.LEFT)
         self.minute_spinbox = ttk.Spinbox(frame_time, from_=0, to=59, width=2, format="%02.0f")
         self.minute_spinbox.pack(side=tk.LEFT)
-        self.create_tooltip(self.frame_schedule, 1, "Set time in 24-hour format")
+        self.create_tooltip(self.frame_schedule, 1, "(24-hr format)")
 
     def create_action_buttons(self) -> None:
         """Create action buttons."""
