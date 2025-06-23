@@ -77,6 +77,17 @@ You can install the dependencies using `pip`:
 pip install -r requirements.txt
 ```
 
+## How to compile the exe
+
+```bash
+pyinstaller --onefile --noconsole --icon=favicon.ico AutoPRScheduler.py
+```
+| Option            | Description                                       |
+| ----------------- | ------------------------------------------------- |
+| `--onefile`       | Creates a single `.exe` instead of multiple files |
+| `--noconsole`     | Hides terminal window (good for GUI apps)         |
+| `--icon=icon.ico` | Adds a custom icon to your `.exe`                 |
+
 ## License
 
 This project is licensed under the [MIT License](LICENSE.txt).
