@@ -1,2 +1,11 @@
 babel==2.17.0
+setuptools==80.9.0
 tkcalendar==1.6.1
+
+# Pyinstaller
+pyinstaller==6.14.1
+altgraph==0.17.4
+pefile==2023.2.7
+pywin32-ctypes==0.2.3
+pyinstaller-hooks-contrib==2025.5
+packaging==25.0
