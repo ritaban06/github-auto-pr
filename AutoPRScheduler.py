@@ -649,11 +649,25 @@ class GUI:
         self.create_tooltip(parent, row, tooltip)
 
     def create_tooltip(self, parent: ttk.Frame, row: int, text: str) -> None:
-        """Create a tooltip label."""
-        tooltip = ttk.Label(parent, text=text)
-        tooltip.grid(row=row, column=3, padx=5)
-        tooltip.bind('<Enter>', lambda e: tooltip.configure(foreground='blue'))
-        tooltip.bind('<Leave>', lambda e: tooltip.configure(foreground='black'))
+        """Create a tooltip that appears on hover."""
+        def show_tooltip(event):
+            tooltip = tk.Toplevel()
+            tooltip.wm_overrideredirect(True)
+            tooltip.wm_geometry(f"+{event.x_root+10}+{event.y_root+10}")
+            
+            label = ttk.Label(tooltip, text=text, justify=tk.LEFT,
+                              background="#ffffe0", relief=tk.SOLID, borderwidth=1)
+            label.pack()
+            
+            def hide_tooltip():
+                tooltip.destroy()
+            
+            label.bind('<Leave>', lambda e: hide_tooltip())
+            tooltip.bind('<Leave>', lambda e: hide_tooltip())
+            parent.bind('<Leave>', lambda e: hide_tooltip())
+            
+        widget = parent.grid_slaves(row=row, column=0)[0]
+        widget.bind('<Enter>', show_tooltip)
 
     def configure_scroll_region(self, event: tk.Event) -> None:
         """Update scroll region when frame size changes."""
